@@ -1,0 +1,354 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Harcama Defteri · Viyana &amp; Budapeşte</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  * { box-sizing: border-box; }
+  html, body, #root { margin: 0; padding: 0; min-height: 100%; }
+  body { -webkit-font-smoothing: antialiased; }
+  .kd-select { appearance: none; -webkit-appearance: none; }
+  .kd-btn-ghost:hover { background: rgba(201,162,75,0.12) !important; }
+  .kd-row:hover .kd-row-actions { opacity: 1; }
+  .kd-row-actions { opacity: 0.55; transition: opacity 0.15s ease; }
+  input:focus, select:focus, textarea:focus { outline: 2px solid #C9A24B; outline-offset: 1px; }
+  button:focus-visible { outline: 2px solid #C9A24B; outline-offset: 2px; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+<script type="text/babel">
+const { useState, useEffect } = React;
+
+const CURRENCIES = {
+  TRY: { symbol: "₺", label: "Türk Lirası", flag: "🇹🇷" },
+  USD: { symbol: "$", label: "Dolar", flag: "🇺🇸" },
+  EUR: { symbol: "€", label: "Euro", flag: "🇪🇺" },
+  HUF: { symbol: "Ft", label: "Forint", flag: "🇭🇺" },
+};
+
+// 1 birim USD/EUR/HUF kaç TL eder. TRY her zaman 1'dir, listede tutulmaz.
+// Bunlar sadece başlangıç değeri — "Düzenle" ile istediğin an elle güncelleyebilirsin.
+const DEFAULT_RATES = { USD: 46.85, EUR: 53.57, HUF: 0.1507 };
+
+const STORAGE_KEYS = { entries: "kd-expenses", rates: "kd-rates-meta" };
+
+const fmtTRY = (n) =>
+  new Intl.NumberFormat("tr-TR", { style: "currency", currency: "TRY", maximumFractionDigits: 2 }).format(n || 0);
+const fmtEUR = (n) =>
+  new Intl.NumberFormat("de-DE", { style: "currency", currency: "EUR", maximumFractionDigits: 2 }).format(n || 0);
+const fmtAmount = (n, currency) => {
+  const decimals = currency === "HUF" ? 0 : 2;
+  const num = new Intl.NumberFormat("tr-TR", { minimumFractionDigits: decimals, maximumFractionDigits: decimals }).format(n || 0);
+  return currency === "HUF" ? `${num} Ft` : currency === "TRY" ? `${num} ₺` : `${CURRENCIES[currency].symbol}${num}`;
+};
+
+const rateFor = (currency, rates) => (currency === "TRY" ? 1 : rates[currency]);
+
+function App() {
+  const [entries, setEntries] = useState([]);
+  const [rates, setRates] = useState(DEFAULT_RATES);
+  const [rateSource, setRateSource] = useState("varsayılan");
+  const [lastUpdated, setLastUpdated] = useState(null);
+  const [showRateEditor, setShowRateEditor] = useState(false);
+
+  const [amount, setAmount] = useState("");
+  const [currency, setCurrency] = useState("EUR");
+  const [description, setDescription] = useState("");
+  const [editingId, setEditingId] = useState(null);
+  const [editDraft, setEditDraft] = useState(null);
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEYS.entries);
+      if (raw) setEntries(JSON.parse(raw));
+    } catch (e) { console.error("Kayıtlar okunamadı:", e); }
+    try {
+      const raw = localStorage.getItem(STORAGE_KEYS.rates);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        setRates(parsed.rates);
+        setRateSource(parsed.source);
+        setLastUpdated(parsed.updated);
+      }
+    } catch (e) { console.error("Kurlar okunamadı:", e); }
+  }, []);
+
+  const persistEntries = (list) => {
+    try { localStorage.setItem(STORAGE_KEYS.entries, JSON.stringify(list)); }
+    catch (e) { console.error("Kayıt yazılamadı:", e); }
+  };
+
+  const persistRates = (r, source, updated) => {
+    try { localStorage.setItem(STORAGE_KEYS.rates, JSON.stringify({ rates: r, source, updated })); }
+    catch (e) { console.error("Kur yazılamadı:", e); }
+  };
+
+  const addEntry = () => {
+    const amt = parseFloat(String(amount).replace(",", "."));
+    if (!amt || amt <= 0) return;
+    const tlAmount = amt * rateFor(currency, rates);
+    const eurAmount = tlAmount / rates.EUR;
+    const entry = {
+      id: Date.now().toString(36) + Math.random().toString(36).slice(2, 7),
+      amount: amt, currency, tlAmount, eurAmount,
+      description: description.trim(),
+      date: new Date().toISOString(),
+      rateUsed: rateFor(currency, rates),
+    };
+    const next = [entry, ...entries];
+    setEntries(next);
+    persistEntries(next);
+    setAmount("");
+    setDescription("");
+  };
+
+  const deleteEntry = (id) => {
+    const next = entries.filter((e) => e.id !== id);
+    setEntries(next);
+    persistEntries(next);
+  };
+
+  const startEdit = (entry) => {
+    setEditingId(entry.id);
+    setEditDraft({ amount: String(entry.amount), currency: entry.currency, description: entry.description });
+  };
+
+  const cancelEdit = () => { setEditingId(null); setEditDraft(null); };
+
+  const saveEdit = (id) => {
+    const amt = parseFloat(String(editDraft.amount).replace(",", "."));
+    if (!amt || amt <= 0) return;
+    const tlAmount = amt * rateFor(editDraft.currency, rates);
+    const eurAmount = tlAmount / rates.EUR;
+    const next = entries.map((e) =>
+      e.id === id
+        ? { ...e, amount: amt, currency: editDraft.currency, description: editDraft.description.trim(), tlAmount, eurAmount, rateUsed: rateFor(editDraft.currency, rates) }
+        : e
+    );
+    setEntries(next);
+    persistEntries(next);
+    cancelEdit();
+  };
+
+  const updateManualRate = (cur, value) => {
+    const v = parseFloat(String(value).replace(",", "."));
+    if (!v || v <= 0) return;
+    const next = { ...rates, [cur]: v };
+    const now = new Date().toISOString();
+    setRates(next);
+    setRateSource("manuel");
+    setLastUpdated(now);
+    persistRates(next, "manuel", now);
+  };
+
+  const totalTL = entries.reduce((s, e) => s + e.tlAmount, 0);
+  const totalEUR = entries.reduce((s, e) => s + e.eurAmount, 0);
+  const byCurrency = entries.reduce((acc, e) => { acc[e.currency] = (acc[e.currency] || 0) + e.amount; return acc; }, {});
+  const formattedDate = (iso) => new Date(iso).toLocaleDateString("tr-TR", { day: "2-digit", month: "short" });
+
+  return (
+    <div style={styles.page}>
+      <div style={styles.container}>
+        <div style={styles.header}>
+          <div style={styles.eyebrow}>
+            <span>✈️</span>
+            <span>VİYANA · BUDAPEŞTE, 2026</span>
+          </div>
+          <h1 style={styles.title}>Harcama Defteri</h1>
+        </div>
+
+        <div style={styles.tickerBar}>
+          <div style={styles.tickerItems}>
+            {["USD", "EUR", "HUF"].map((cur) => (
+              <div key={cur} style={styles.tickerItem}>
+                <span style={styles.tickerFlag}>{CURRENCIES[cur].flag}</span>
+                <span style={styles.tickerText}>1 {cur} = <b>{fmtTRY(rates[cur])}</b></span>
+              </div>
+            ))}
+          </div>
+          <div style={styles.tickerRight}>
+            <span style={styles.tickerMeta}>
+              {rateSource === "manuel" ? "Manuel kur" : "Varsayılan kur"}
+              {lastUpdated ? ` · ${new Date(lastUpdated).toLocaleDateString("tr-TR")}` : ""}
+            </span>
+            <button onClick={() => setShowRateEditor((s) => !s)} className="kd-btn-ghost" style={styles.textBtn}>
+              {showRateEditor ? "Kapat" : "Düzenle"}
+            </button>
+          </div>
+        </div>
+
+        {showRateEditor && (
+          <div style={styles.rateEditor}>
+            {["USD", "EUR", "HUF"].map((cur) => (
+              <label key={cur} style={styles.rateEditorField}>
+                <span style={styles.rateEditorLabel}>1 {cur} =</span>
+                <input type="number" step="0.001" defaultValue={rates[cur]}
+                  onBlur={(e) => updateManualRate(cur, e.target.value)}
+                  style={styles.rateEditorInput} />
+                <span style={styles.rateEditorLabel}>TL</span>
+              </label>
+            ))}
+          </div>
+        )}
+
+        <div style={styles.ticket}>
+          <div style={styles.ticketHalf}>
+            <div style={styles.ticketLabel}>TOPLAM · TL</div>
+            <div style={styles.ticketAmountTL}>{fmtTRY(totalTL)}</div>
+            <div style={styles.ticketSub}>{entries.length} kayıt</div>
+          </div>
+          <div style={styles.perforation}>
+            <span style={{ ...styles.notch, top: -9 }} />
+            <span style={{ ...styles.notch, bottom: -9 }} />
+          </div>
+          <div style={styles.ticketHalf}>
+            <div style={styles.ticketLabel}>TOPLAM · EUR</div>
+            <div style={styles.ticketAmountEUR}>{fmtEUR(totalEUR)}</div>
+            <div style={styles.ticketSub}>
+              {Object.keys(byCurrency).map((c) => fmtAmount(byCurrency[c], c)).join(" · ") || "—"}
+            </div>
+          </div>
+        </div>
+
+        <div style={styles.form}>
+          <div style={styles.formRow}>
+            <div style={styles.amountGroup}>
+              <input type="number" inputMode="decimal" placeholder="0.00" value={amount}
+                onChange={(e) => setAmount(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && addEntry()}
+                style={styles.amountInput} />
+              <select className="kd-select" value={currency} onChange={(e) => setCurrency(e.target.value)} style={styles.currencySelect}>
+                {Object.keys(CURRENCIES).map((cur) => (
+                  <option key={cur} value={cur}>{CURRENCIES[cur].flag} {cur}</option>
+                ))}
+              </select>
+            </div>
+            <input type="text" placeholder="Açıklama (opsiyonel) — örn. akşam yemeği" value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && addEntry()}
+              style={styles.descInput} />
+            <button onClick={addEntry} style={styles.addBtn}>+ Ekle</button>
+          </div>
+          {amount && !isNaN(parseFloat(amount)) && currency !== "TRY" && (
+            <div style={styles.livePreview}>
+              ≈ {fmtTRY(parseFloat(String(amount).replace(",", ".")) * rateFor(currency, rates))} olarak kaydedilecek
+            </div>
+          )}
+        </div>
+
+        <div style={styles.listSection}>
+          {entries.length === 0 ? (
+            <div style={styles.empty}>
+              <div style={styles.emptyTitle}>Henüz harcama yok</div>
+              <div style={styles.emptyText}>İlk harcamanı yukarıdan ekleyerek deftere başla.</div>
+            </div>
+          ) : (
+            entries.map((entry) => (
+              <div key={entry.id} className="kd-row" style={styles.row}>
+                {editingId === entry.id ? (
+                  <div style={styles.editRow}>
+                    <input type="number" value={editDraft.amount}
+                      onChange={(e) => setEditDraft({ ...editDraft, amount: e.target.value })}
+                      style={{ ...styles.amountInput, width: 90, fontSize: 14, padding: "8px 10px" }} />
+                    <select className="kd-select" value={editDraft.currency}
+                      onChange={(e) => setEditDraft({ ...editDraft, currency: e.target.value })}
+                      style={{ ...styles.currencySelect, padding: "8px 8px" }}>
+                      {Object.keys(CURRENCIES).map((cur) => <option key={cur} value={cur}>{cur}</option>)}
+                    </select>
+                    <input type="text" value={editDraft.description}
+                      onChange={(e) => setEditDraft({ ...editDraft, description: e.target.value })}
+                      placeholder="Açıklama"
+                      style={{ ...styles.descInput, fontSize: 14, padding: "8px 10px" }} />
+                    <button onClick={() => saveEdit(entry.id)} style={styles.iconBtnSolid} title="Kaydet">✓</button>
+                    <button onClick={cancelEdit} style={styles.iconBtnGhostDanger} title="Vazgeç">✕</button>
+                  </div>
+                ) : (
+                  <React.Fragment>
+                    <div style={styles.rowDate}>{formattedDate(entry.date)}</div>
+                    <div style={styles.rowMain}>
+                      <div style={styles.rowDesc}>
+                        {entry.description || <span style={{ color: "#9AA3B5" }}>Açıklama yok</span>}
+                      </div>
+                      <div style={styles.rowOrig}>{CURRENCIES[entry.currency].flag} {fmtAmount(entry.amount, entry.currency)}</div>
+                    </div>
+                    <div style={styles.rowTL}>{fmtTRY(entry.tlAmount)}</div>
+                    <div className="kd-row-actions" style={styles.rowActions}>
+                      <button onClick={() => startEdit(entry)} style={styles.iconBtn} title="Düzenle">✎</button>
+                      <button onClick={() => deleteEntry(entry.id)} style={styles.iconBtnDanger} title="Sil">🗑</button>
+                    </div>
+                  </React.Fragment>
+                )}
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const styles = {
+  page: { minHeight: "100vh", background: "#101B2D", backgroundImage: "radial-gradient(circle at 15% 0%, rgba(201,162,75,0.08), transparent 40%), radial-gradient(circle at 90% 20%, rgba(74,124,124,0.10), transparent 45%)", fontFamily: "'Inter', sans-serif", padding: "32px 16px 60px", display: "flex", justifyContent: "center" },
+  container: { width: "100%", maxWidth: 560 },
+  header: { marginBottom: 22, paddingLeft: 2 },
+  eyebrow: { display: "flex", alignItems: "center", gap: 6, color: "#C9A24B", fontFamily: "'IBM Plex Mono', monospace", fontSize: 11.5, letterSpacing: "0.14em", fontWeight: 600, marginBottom: 6 },
+  title: { fontFamily: "'Fraunces', serif", fontSize: 34, fontWeight: 600, color: "#F7F1E3", margin: 0, letterSpacing: "-0.01em" },
+  tickerBar: { display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10, background: "rgba(247,241,227,0.05)", border: "1px solid rgba(247,241,227,0.10)", borderRadius: 12, padding: "10px 14px", marginBottom: 10 },
+  tickerItems: { display: "flex", gap: 18, flexWrap: "wrap" },
+  tickerItem: { display: "flex", alignItems: "center", gap: 6 },
+  tickerFlag: { fontSize: 13 },
+  tickerText: { color: "#C7CEDB", fontFamily: "'IBM Plex Mono', monospace", fontSize: 12.5 },
+  tickerRight: { display: "flex", alignItems: "center", gap: 8 },
+  tickerMeta: { color: "#6E7891", fontSize: 11, fontFamily: "'IBM Plex Mono', monospace" },
+  textBtn: { background: "transparent", border: "none", color: "#C9A24B", cursor: "pointer", fontSize: 12.5, fontWeight: 600, padding: "6px 8px", borderRadius: 8, fontFamily: "'Inter', sans-serif" },
+  rateEditor: { display: "flex", gap: 10, flexWrap: "wrap", background: "rgba(247,241,227,0.04)", border: "1px solid rgba(247,241,227,0.10)", borderRadius: 12, padding: "12px 14px", marginBottom: 10 },
+  rateEditorField: { display: "flex", alignItems: "center", gap: 6 },
+  rateEditorLabel: { color: "#9AA3B5", fontSize: 12.5, fontFamily: "'IBM Plex Mono', monospace" },
+  rateEditorInput: { width: 70, background: "rgba(247,241,227,0.08)", border: "1px solid rgba(247,241,227,0.18)", borderRadius: 6, color: "#F7F1E3", fontFamily: "'IBM Plex Mono', monospace", fontSize: 12.5, padding: "5px 7px" },
+  ticket: { display: "flex", background: "#F7F1E3", borderRadius: 16, marginBottom: 20, position: "relative", boxShadow: "0 12px 30px -12px rgba(0,0,0,0.5)", overflow: "hidden" },
+  ticketHalf: { flex: 1, padding: "20px 22px" },
+  ticketLabel: { fontFamily: "'IBM Plex Mono', monospace", fontSize: 10.5, letterSpacing: "0.12em", color: "#8A7A4E", fontWeight: 600, marginBottom: 6 },
+  ticketAmountTL: { fontFamily: "'Fraunces', serif", fontSize: 27, fontWeight: 700, color: "#1B2A41", lineHeight: 1.1 },
+  ticketAmountEUR: { fontFamily: "'Fraunces', serif", fontSize: 27, fontWeight: 700, color: "#3A5B5B", lineHeight: 1.1 },
+  ticketSub: { marginTop: 8, fontSize: 11.5, color: "#8B7F63", fontFamily: "'IBM Plex Mono', monospace" },
+  perforation: { width: 0, borderLeft: "2px dashed #D9CDA8", position: "relative", margin: "14px 0" },
+  notch: { position: "absolute", left: -9, width: 18, height: 18, borderRadius: "50%", background: "#101B2D" },
+  form: { marginBottom: 26 },
+  formRow: { display: "flex", gap: 8, flexWrap: "wrap" },
+  amountGroup: { display: "flex", flex: "1 1 200px" },
+  amountInput: { flex: 1, minWidth: 90, background: "rgba(247,241,227,0.06)", border: "1px solid rgba(247,241,227,0.16)", borderRight: "none", borderRadius: "10px 0 0 10px", color: "#F7F1E3", fontFamily: "'IBM Plex Mono', monospace", fontSize: 15, padding: "12px 12px" },
+  currencySelect: { background: "rgba(201,162,75,0.14)", border: "1px solid rgba(247,241,227,0.16)", borderRadius: "0 10px 10px 0", color: "#F7F1E3", fontFamily: "'Inter', sans-serif", fontSize: 13.5, fontWeight: 600, padding: "12px 10px", cursor: "pointer" },
+  descInput: { flex: "2 1 220px", background: "rgba(247,241,227,0.06)", border: "1px solid rgba(247,241,227,0.16)", borderRadius: 10, color: "#F7F1E3", fontFamily: "'Inter', sans-serif", fontSize: 14, padding: "12px 14px" },
+  addBtn: { display: "flex", alignItems: "center", gap: 6, background: "#C9A24B", border: "none", borderRadius: 10, color: "#101B2D", fontFamily: "'Inter', sans-serif", fontWeight: 700, fontSize: 14, padding: "12px 18px", cursor: "pointer" },
+  livePreview: { marginTop: 8, fontSize: 12, color: "#7FA8A0", fontFamily: "'IBM Plex Mono', monospace", paddingLeft: 2 },
+  listSection: { display: "flex", flexDirection: "column", gap: 2 },
+  empty: { textAlign: "center", padding: "48px 20px", border: "1px dashed rgba(247,241,227,0.16)", borderRadius: 14 },
+  emptyTitle: { color: "#F7F1E3", fontFamily: "'Fraunces', serif", fontSize: 18, marginBottom: 4 },
+  emptyText: { color: "#7C859B", fontSize: 13.5 },
+  row: { display: "flex", alignItems: "center", gap: 14, padding: "13px 6px", borderBottom: "1px solid rgba(247,241,227,0.08)" },
+  rowDate: { color: "#6E7891", fontFamily: "'IBM Plex Mono', monospace", fontSize: 11.5, width: 42, flexShrink: 0 },
+  rowMain: { flex: 1, minWidth: 0 },
+  rowDesc: { color: "#F0EBDC", fontSize: 14, fontWeight: 500, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" },
+  rowOrig: { color: "#8C93A8", fontSize: 12, marginTop: 2, fontFamily: "'IBM Plex Mono', monospace" },
+  rowTL: { color: "#C9A24B", fontFamily: "'IBM Plex Mono', monospace", fontWeight: 600, fontSize: 14, flexShrink: 0, textAlign: "right", minWidth: 92 },
+  rowActions: { display: "flex", gap: 2, flexShrink: 0 },
+  iconBtn: { background: "transparent", border: "none", color: "#C9A24B", cursor: "pointer", padding: 6, borderRadius: 8, display: "flex" },
+  iconBtnDanger: { background: "transparent", border: "none", color: "#B5493F", cursor: "pointer", padding: 6, borderRadius: 8, display: "flex" },
+  iconBtnSolid: { background: "#C9A24B", border: "none", color: "#101B2D", cursor: "pointer", padding: 8, borderRadius: 8, display: "flex" },
+  iconBtnGhostDanger: { background: "transparent", border: "1px solid rgba(181,73,63,0.4)", color: "#B5493F", cursor: "pointer", padding: 8, borderRadius: 8, display: "flex" },
+  editRow: { display: "flex", gap: 6, width: "100%", alignItems: "center", flexWrap: "wrap" },
+};
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>
