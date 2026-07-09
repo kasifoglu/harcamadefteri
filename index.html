@@ -6,9 +6,8 @@
 <meta name="theme-color" content="#101B2D" />
 <meta name="apple-mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-<title>Harcamalar</title>
-<link rel="apple-touch-icon" href="icon.PNG">
-</head>
+<title>Harcama Defteri</title>
+<link rel="apple-touch-icon" href="icon.png">
 <style>
   * { box-sizing: border-box; }
   html, body, #root { margin: 0; padding: 0; min-height: 100%; background: #101B2D; }
@@ -31,39 +30,55 @@
 <script type="text/babel">
 const { useState, useEffect } = React;
 
-const CURRENCIES = {
-  TRY: { symbol: "₺", label: "Türk Lirası", flag: "🇹🇷" },
-  USD: { symbol: "$", label: "Dolar", flag: "🇺🇸" },
-  EUR: { symbol: "€", label: "Euro", flag: "🇪🇺" },
-  HUF: { symbol: "Ft", label: "Forint", flag: "🇭🇺" },
+const DEFAULT_TITLE = "VİYANA · BUDAPEŞTE, 2026";
+
+// TRY her zaman sabit taban para birimidir, silinemez.
+const DEFAULT_CURRENCIES = {
+  TRY: { symbol: "₺", flag: "🇹🇷" },
+  USD: { symbol: "$", flag: "🇺🇸" },
+  EUR: { symbol: "€", flag: "🇪🇺" },
+  HUF: { symbol: "Ft", flag: "🇭🇺" },
 };
 
-// 1 birim USD/EUR/HUF kaç TL eder. TRY her zaman 1'dir, listede tutulmaz.
+// 1 birim döviz kaç TL eder. TRY listede yer almaz (her zaman 1 kabul edilir).
 // Bunlar sadece başlangıç değeri — "Düzenle" ile istediğin an elle güncelleyebilirsin.
 const DEFAULT_RATES = { USD: 46.85, EUR: 53.57, HUF: 0.1507 };
 
-const STORAGE_KEYS = { entries: "kd-expenses", rates: "kd-rates-meta" };
+const STORAGE_KEYS = { entries: "kd-expenses", settings: "kd-settings" };
 
 const fmtTRY = (n) =>
   new Intl.NumberFormat("tr-TR", { style: "currency", currency: "TRY", maximumFractionDigits: 2 }).format(n || 0);
 const fmtEUR = (n) =>
   new Intl.NumberFormat("de-DE", { style: "currency", currency: "EUR", maximumFractionDigits: 2 }).format(n || 0);
-const fmtAmount = (n, currency) => {
-  const decimals = currency === "HUF" ? 0 : 2;
+
+const fmtAmount = (n, code, currencies) => {
+  const cur = currencies[code] || { symbol: code, flag: "" };
+  const decimals = code === "HUF" ? 0 : 2;
   const num = new Intl.NumberFormat("tr-TR", { minimumFractionDigits: decimals, maximumFractionDigits: decimals }).format(n || 0);
-  return currency === "HUF" ? `${num} Ft` : currency === "TRY" ? `${num} ₺` : `${CURRENCIES[currency].symbol}${num}`;
+  // TL ve Forint gibi para birimlerinde sembol sona, diğerlerinde başa yazılır.
+  return code === "TRY" || code === "HUF" ? `${num} ${cur.symbol}` : `${cur.symbol}${num}`;
 };
 
-const rateFor = (currency, rates) => (currency === "TRY" ? 1 : rates[currency]);
-const entryTL = (entry, rates) => entry.amount * rateFor(entry.currency, rates);
-const entryEUR = (entry, rates) => entryTL(entry, rates) / rates.EUR;
+const rateFor = (code, rates) => (code === "TRY" ? 1 : rates[code]);
+const entryTL = (entry, rates) => entry.amount * (rateFor(entry.currency, rates) || 0);
+const entryEUR = (entry, rates) => entryTL(entry, rates) / (rates.EUR || 1);
 
 function App() {
   const [entries, setEntries] = useState([]);
+  const [tripTitle, setTripTitle] = useState(DEFAULT_TITLE);
+  const [currencies, setCurrencies] = useState(DEFAULT_CURRENCIES);
   const [rates, setRates] = useState(DEFAULT_RATES);
   const [rateSource, setRateSource] = useState("varsayılan");
   const [lastUpdated, setLastUpdated] = useState(null);
   const [showRateEditor, setShowRateEditor] = useState(false);
+
+  const [editingTitle, setEditingTitle] = useState(false);
+  const [titleDraft, setTitleDraft] = useState(DEFAULT_TITLE);
+
+  const [newCode, setNewCode] = useState("");
+  const [newSymbol, setNewSymbol] = useState("");
+  const [newFlag, setNewFlag] = useState("");
+  const [newRate, setNewRate] = useState("");
 
   const [amount, setAmount] = useState("");
   const [currency, setCurrency] = useState("EUR");
@@ -77,14 +92,16 @@ function App() {
       if (raw) setEntries(JSON.parse(raw));
     } catch (e) { console.error("Kayıtlar okunamadı:", e); }
     try {
-      const raw = localStorage.getItem(STORAGE_KEYS.rates);
+      const raw = localStorage.getItem(STORAGE_KEYS.settings);
       if (raw) {
-        const parsed = JSON.parse(raw);
-        setRates(parsed.rates);
-        setRateSource(parsed.source);
-        setLastUpdated(parsed.updated);
+        const s = JSON.parse(raw);
+        if (s.tripTitle) { setTripTitle(s.tripTitle); setTitleDraft(s.tripTitle); }
+        if (s.currencies) setCurrencies(s.currencies);
+        if (s.rates) setRates(s.rates);
+        if (s.source) setRateSource(s.source);
+        if (s.updated) setLastUpdated(s.updated);
       }
-    } catch (e) { console.error("Kurlar okunamadı:", e); }
+    } catch (e) { console.error("Ayarlar okunamadı:", e); }
   }, []);
 
   const persistEntries = (list) => {
@@ -92,11 +109,67 @@ function App() {
     catch (e) { console.error("Kayıt yazılamadı:", e); }
   };
 
-  const persistRates = (r, source, updated) => {
-    try { localStorage.setItem(STORAGE_KEYS.rates, JSON.stringify({ rates: r, source, updated })); }
-    catch (e) { console.error("Kur yazılamadı:", e); }
+  const persistSettings = (next) => {
+    try { localStorage.setItem(STORAGE_KEYS.settings, JSON.stringify(next)); }
+    catch (e) { console.error("Ayar yazılamadı:", e); }
   };
 
+  const saveSettings = (patch) => {
+    const next = {
+      tripTitle: patch.tripTitle !== undefined ? patch.tripTitle : tripTitle,
+      currencies: patch.currencies !== undefined ? patch.currencies : currencies,
+      rates: patch.rates !== undefined ? patch.rates : rates,
+      source: patch.source !== undefined ? patch.source : rateSource,
+      updated: patch.updated !== undefined ? patch.updated : lastUpdated,
+    };
+    if (patch.tripTitle !== undefined) setTripTitle(patch.tripTitle);
+    if (patch.currencies !== undefined) setCurrencies(patch.currencies);
+    if (patch.rates !== undefined) setRates(patch.rates);
+    if (patch.source !== undefined) setRateSource(patch.source);
+    if (patch.updated !== undefined) setLastUpdated(patch.updated);
+    persistSettings(next);
+  };
+
+  // ---- başlık düzenleme ----
+  const startTitleEdit = () => { setTitleDraft(tripTitle); setEditingTitle(true); };
+  const cancelTitleEdit = () => setEditingTitle(false);
+  const saveTitleEdit = () => {
+    const v = titleDraft.trim();
+    if (v) saveSettings({ tripTitle: v.toUpperCase() });
+    setEditingTitle(false);
+  };
+
+  // ---- kur / para birimi yönetimi ----
+  const updateManualRate = (code, value) => {
+    const v = parseFloat(String(value).replace(",", "."));
+    if (!v || v <= 0) return;
+    const nextRates = { ...rates, [code]: v };
+    saveSettings({ rates: nextRates, source: "manuel", updated: new Date().toISOString() });
+  };
+
+  const addCurrency = () => {
+    const code = newCode.trim().toUpperCase();
+    const rate = parseFloat(String(newRate).replace(",", "."));
+    if (!code || code.length < 2 || code.length > 5) return;
+    if (currencies[code]) return;
+    if (!rate || rate <= 0) return;
+    const nextCurrencies = { ...currencies, [code]: { symbol: newSymbol.trim() || code, flag: newFlag.trim() } };
+    const nextRates = { ...rates, [code]: rate };
+    saveSettings({ currencies: nextCurrencies, rates: nextRates, source: "manuel", updated: new Date().toISOString() });
+    setNewCode(""); setNewSymbol(""); setNewFlag(""); setNewRate("");
+  };
+
+  const removeCurrency = (code) => {
+    if (code === "TRY") return;
+    const nextCurrencies = { ...currencies };
+    delete nextCurrencies[code];
+    const nextRates = { ...rates };
+    delete nextRates[code];
+    saveSettings({ currencies: nextCurrencies, rates: nextRates });
+    if (currency === code) setCurrency("TRY");
+  };
+
+  // ---- harcama işlemleri ----
   const addEntry = () => {
     const amt = parseFloat(String(amount).replace(",", "."));
     if (!amt || amt <= 0) return;
@@ -139,38 +212,45 @@ function App() {
     cancelEdit();
   };
 
-  const updateManualRate = (cur, value) => {
-    const v = parseFloat(String(value).replace(",", "."));
-    if (!v || v <= 0) return;
-    const next = { ...rates, [cur]: v };
-    const now = new Date().toISOString();
-    setRates(next);
-    setRateSource("manuel");
-    setLastUpdated(now);
-    persistRates(next, "manuel", now);
-  };
-
   const totalTL = entries.reduce((s, e) => s + entryTL(e, rates), 0);
   const totalEUR = entries.reduce((s, e) => s + entryEUR(e, rates), 0);
   const formattedDate = (iso) => new Date(iso).toLocaleDateString("tr-TR", { day: "2-digit", month: "short" });
+  const foreignCodes = Object.keys(currencies).filter((c) => c !== "TRY");
 
   return (
     <div style={styles.page}>
       <div style={styles.container}>
         <div style={styles.header}>
-          <div style={styles.eyebrow}>
-            <span>✈️</span>
-            <span>VİYANA · BUDAPEŞTE, 2026</span>
-          </div>
+          {editingTitle ? (
+            <div style={styles.titleEditRow}>
+              <input
+                type="text"
+                value={titleDraft}
+                onChange={(e) => setTitleDraft(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") saveTitleEdit(); if (e.key === "Escape") cancelTitleEdit(); }}
+                placeholder="örn. LONDRA, 2026"
+                style={styles.titleInput}
+                autoFocus
+              />
+              <button onClick={saveTitleEdit} style={styles.iconBtnSolid} title="Kaydet">✓</button>
+              <button onClick={cancelTitleEdit} style={styles.iconBtnGhostDanger} title="Vazgeç">✕</button>
+            </div>
+          ) : (
+            <div style={styles.eyebrow} onClick={startTitleEdit} title="Başlığı düzenlemek için tıkla">
+              <span>✈️</span>
+              <span>{tripTitle}</span>
+              <span style={styles.titleEditHint}>✎</span>
+            </div>
+          )}
           <h1 style={styles.title}>Harcama Defteri</h1>
         </div>
 
         <div style={styles.tickerBar}>
           <div style={styles.tickerItems}>
-            {["USD", "EUR", "HUF"].map((cur) => (
-              <div key={cur} style={styles.tickerItem}>
-                <span style={styles.tickerFlag}>{CURRENCIES[cur].flag}</span>
-                <span style={styles.tickerText}>1 {cur} = <b>{fmtTRY(rates[cur])}</b></span>
+            {foreignCodes.map((code) => (
+              <div key={code} style={styles.tickerItem}>
+                <span style={styles.tickerFlag}>{currencies[code].flag}</span>
+                <span style={styles.tickerText}>1 {code} = <b>{fmtTRY(rates[code])}</b></span>
               </div>
             ))}
           </div>
@@ -187,15 +267,34 @@ function App() {
 
         {showRateEditor && (
           <div style={styles.rateEditor}>
-            {["USD", "EUR", "HUF"].map((cur) => (
-              <label key={cur} style={styles.rateEditorField}>
-                <span style={styles.rateEditorLabel}>1 {cur} =</span>
-                <input type="number" step="0.001" defaultValue={rates[cur]}
-                  onBlur={(e) => updateManualRate(cur, e.target.value)}
-                  style={styles.rateEditorInput} />
-                <span style={styles.rateEditorLabel}>TL</span>
-              </label>
+            {foreignCodes.map((code) => (
+              <div key={code} style={styles.rateEditorRow}>
+                <label style={styles.rateEditorField}>
+                  <span style={styles.rateEditorLabel}>{currencies[code].flag} 1 {code} =</span>
+                  <input type="number" step="0.001" defaultValue={rates[code]}
+                    onBlur={(e) => updateManualRate(code, e.target.value)}
+                    style={styles.rateEditorInput} />
+                  <span style={styles.rateEditorLabel}>TL</span>
+                </label>
+                <button onClick={() => removeCurrency(code)} style={styles.iconBtnDanger} title={`${code} para birimini kaldır`}>🗑</button>
+              </div>
             ))}
+
+            <div style={styles.addCurrencyRow}>
+              <input type="text" placeholder="Kod (örn. GBP)" value={newCode}
+                onChange={(e) => setNewCode(e.target.value.toUpperCase())}
+                maxLength={5} style={styles.addCurrencyInputSmall} />
+              <input type="text" placeholder="Sembol (£)" value={newSymbol}
+                onChange={(e) => setNewSymbol(e.target.value)}
+                maxLength={4} style={styles.addCurrencyInputSmall} />
+              <input type="text" placeholder="Bayrak 🇬🇧" value={newFlag}
+                onChange={(e) => setNewFlag(e.target.value)}
+                maxLength={4} style={styles.addCurrencyInputSmall} />
+              <input type="number" step="0.001" placeholder="1 birim kaç TL" value={newRate}
+                onChange={(e) => setNewRate(e.target.value)}
+                style={styles.addCurrencyInputRate} />
+              <button onClick={addCurrency} style={styles.addCurrencyBtn}>+ Ekle</button>
+            </div>
           </div>
         )}
 
@@ -222,8 +321,8 @@ function App() {
                 onKeyDown={(e) => e.key === "Enter" && addEntry()}
                 style={styles.amountInput} />
               <select className="kd-select" value={currency} onChange={(e) => setCurrency(e.target.value)} style={styles.currencySelect}>
-                {Object.keys(CURRENCIES).map((cur) => (
-                  <option key={cur} value={cur}>{CURRENCIES[cur].flag} {cur}</option>
+                {Object.keys(currencies).map((code) => (
+                  <option key={code} value={code}>{currencies[code].flag} {code}</option>
                 ))}
               </select>
             </div>
@@ -257,7 +356,7 @@ function App() {
                     <select className="kd-select" value={editDraft.currency}
                       onChange={(e) => setEditDraft({ ...editDraft, currency: e.target.value })}
                       style={{ ...styles.currencySelect, padding: "8px 8px" }}>
-                      {Object.keys(CURRENCIES).map((cur) => <option key={cur} value={cur}>{cur}</option>)}
+                      {Object.keys(currencies).map((code) => <option key={code} value={code}>{code}</option>)}
                     </select>
                     <input type="text" value={editDraft.description}
                       onChange={(e) => setEditDraft({ ...editDraft, description: e.target.value })}
@@ -273,7 +372,9 @@ function App() {
                       <div style={styles.rowDesc}>
                         {entry.description || <span style={{ color: "#9AA3B5" }}>Açıklama yok</span>}
                       </div>
-                      <div style={styles.rowOrig}>{CURRENCIES[entry.currency].flag} {fmtAmount(entry.amount, entry.currency)}</div>
+                      <div style={styles.rowOrig}>
+                        {(currencies[entry.currency] || {}).flag || ""} {fmtAmount(entry.amount, entry.currency, currencies)}
+                      </div>
                     </div>
                     <div style={styles.rowTL}>{fmtTRY(entryTL(entry, rates))}</div>
                     <div className="kd-row-actions" style={styles.rowActions}>
@@ -295,7 +396,10 @@ const styles = {
   page: { minHeight: "100vh", background: "#101B2D", backgroundImage: "radial-gradient(circle at 15% 0%, rgba(201,162,75,0.08), transparent 40%), radial-gradient(circle at 90% 20%, rgba(74,124,124,0.10), transparent 45%)", fontFamily: "'Inter', sans-serif", padding: "max(32px, env(safe-area-inset-top)) 16px 60px", display: "flex", justifyContent: "center" },
   container: { width: "100%", maxWidth: 560 },
   header: { marginBottom: 22, paddingLeft: 2 },
-  eyebrow: { display: "flex", alignItems: "center", gap: 6, color: "#C9A24B", fontFamily: "'IBM Plex Mono', monospace", fontSize: 11.5, letterSpacing: "0.14em", fontWeight: 600, marginBottom: 6 },
+  eyebrow: { display: "flex", alignItems: "center", gap: 6, color: "#C9A24B", fontFamily: "'IBM Plex Mono', monospace", fontSize: 11.5, letterSpacing: "0.14em", fontWeight: 600, marginBottom: 6, cursor: "pointer", width: "fit-content" },
+  titleEditHint: { opacity: 0.6, fontSize: 11 },
+  titleEditRow: { display: "flex", alignItems: "center", gap: 6, marginBottom: 6 },
+  titleInput: { flex: 1, background: "rgba(247,241,227,0.08)", border: "1px solid rgba(247,241,227,0.2)", borderRadius: 6, color: "#F7F1E3", fontFamily: "'IBM Plex Mono', monospace", fontSize: 12, letterSpacing: "0.08em", padding: "6px 9px", textTransform: "uppercase" },
   title: { fontFamily: "'Fraunces', serif", fontSize: 34, fontWeight: 600, color: "#F7F1E3", margin: 0, letterSpacing: "-0.01em" },
   tickerBar: { display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10, background: "rgba(247,241,227,0.05)", border: "1px solid rgba(247,241,227,0.10)", borderRadius: 12, padding: "10px 14px", marginBottom: 10 },
   tickerItems: { display: "flex", gap: 18, flexWrap: "wrap" },
@@ -305,16 +409,20 @@ const styles = {
   tickerRight: { display: "flex", alignItems: "center", gap: 8 },
   tickerMeta: { color: "#6E7891", fontSize: 11, fontFamily: "'IBM Plex Mono', monospace" },
   textBtn: { background: "transparent", border: "none", color: "#C9A24B", cursor: "pointer", fontSize: 12.5, fontWeight: 600, padding: "6px 8px", borderRadius: 8, fontFamily: "'Inter', sans-serif" },
-  rateEditor: { display: "flex", gap: 10, flexWrap: "wrap", background: "rgba(247,241,227,0.04)", border: "1px solid rgba(247,241,227,0.10)", borderRadius: 12, padding: "12px 14px", marginBottom: 10 },
+  rateEditor: { display: "flex", flexDirection: "column", gap: 10, background: "rgba(247,241,227,0.04)", border: "1px solid rgba(247,241,227,0.10)", borderRadius: 12, padding: "12px 14px", marginBottom: 10 },
+  rateEditorRow: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 },
   rateEditorField: { display: "flex", alignItems: "center", gap: 6 },
   rateEditorLabel: { color: "#9AA3B5", fontSize: 12.5, fontFamily: "'IBM Plex Mono', monospace" },
   rateEditorInput: { width: 70, background: "rgba(247,241,227,0.08)", border: "1px solid rgba(247,241,227,0.18)", borderRadius: 6, color: "#F7F1E3", fontFamily: "'IBM Plex Mono', monospace", fontSize: 12.5, padding: "5px 7px" },
+  addCurrencyRow: { display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center", paddingTop: 8, borderTop: "1px dashed rgba(247,241,227,0.14)" },
+  addCurrencyInputSmall: { width: 74, background: "rgba(247,241,227,0.08)", border: "1px solid rgba(247,241,227,0.18)", borderRadius: 6, color: "#F7F1E3", fontFamily: "'Inter', sans-serif", fontSize: 12.5, padding: "6px 8px" },
+  addCurrencyInputRate: { width: 96, background: "rgba(247,241,227,0.08)", border: "1px solid rgba(247,241,227,0.18)", borderRadius: 6, color: "#F7F1E3", fontFamily: "'IBM Plex Mono', monospace", fontSize: 12.5, padding: "6px 8px" },
+  addCurrencyBtn: { background: "rgba(201,162,75,0.18)", border: "1px solid rgba(201,162,75,0.4)", borderRadius: 6, color: "#C9A24B", fontFamily: "'Inter', sans-serif", fontWeight: 600, fontSize: 12.5, padding: "6px 10px", cursor: "pointer" },
   ticket: { display: "flex", background: "#F7F1E3", borderRadius: 16, marginBottom: 20, position: "relative", boxShadow: "0 12px 30px -12px rgba(0,0,0,0.5)", overflow: "hidden" },
   ticketHalf: { flex: 1, padding: "20px 22px" },
   ticketLabel: { fontFamily: "'IBM Plex Mono', monospace", fontSize: 10.5, letterSpacing: "0.12em", color: "#8A7A4E", fontWeight: 600, marginBottom: 6 },
   ticketAmountTL: { fontFamily: "'Fraunces', serif", fontSize: 27, fontWeight: 700, color: "#1B2A41", lineHeight: 1.1 },
   ticketAmountEUR: { fontFamily: "'Fraunces', serif", fontSize: 27, fontWeight: 700, color: "#3A5B5B", lineHeight: 1.1 },
-  ticketSub: { marginTop: 8, fontSize: 11.5, color: "#8B7F63", fontFamily: "'IBM Plex Mono', monospace" },
   perforation: { width: 0, borderLeft: "2px dashed #D9CDA8", position: "relative", margin: "14px 0" },
   notch: { position: "absolute", left: -9, width: 18, height: 18, borderRadius: "50%", background: "#101B2D" },
   form: { marginBottom: 26 },
