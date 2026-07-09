@@ -2,12 +2,16 @@
 <html lang="tr">
 <head>
 <meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Seyahat Harcamaları</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+<meta name="theme-color" content="#101B2D" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<title>Harcamalar</title>
 <link rel="apple-touch-icon" href="icon.PNG">
+</head>
 <style>
   * { box-sizing: border-box; }
-  html, body, #root { margin: 0; padding: 0; min-height: 100%; }
+  html, body, #root { margin: 0; padding: 0; min-height: 100%; background: #101B2D; }
   body { -webkit-font-smoothing: antialiased; }
   .kd-select { appearance: none; -webkit-appearance: none; }
   .kd-btn-ghost:hover { background: rgba(201,162,75,0.12) !important; }
@@ -51,6 +55,8 @@ const fmtAmount = (n, currency) => {
 };
 
 const rateFor = (currency, rates) => (currency === "TRY" ? 1 : rates[currency]);
+const entryTL = (entry, rates) => entry.amount * rateFor(entry.currency, rates);
+const entryEUR = (entry, rates) => entryTL(entry, rates) / rates.EUR;
 
 function App() {
   const [entries, setEntries] = useState([]);
@@ -94,14 +100,11 @@ function App() {
   const addEntry = () => {
     const amt = parseFloat(String(amount).replace(",", "."));
     if (!amt || amt <= 0) return;
-    const tlAmount = amt * rateFor(currency, rates);
-    const eurAmount = tlAmount / rates.EUR;
     const entry = {
       id: Date.now().toString(36) + Math.random().toString(36).slice(2, 7),
-      amount: amt, currency, tlAmount, eurAmount,
+      amount: amt, currency,
       description: description.trim(),
       date: new Date().toISOString(),
-      rateUsed: rateFor(currency, rates),
     };
     const next = [entry, ...entries];
     setEntries(next);
@@ -126,11 +129,9 @@ function App() {
   const saveEdit = (id) => {
     const amt = parseFloat(String(editDraft.amount).replace(",", "."));
     if (!amt || amt <= 0) return;
-    const tlAmount = amt * rateFor(editDraft.currency, rates);
-    const eurAmount = tlAmount / rates.EUR;
     const next = entries.map((e) =>
       e.id === id
-        ? { ...e, amount: amt, currency: editDraft.currency, description: editDraft.description.trim(), tlAmount, eurAmount, rateUsed: rateFor(editDraft.currency, rates) }
+        ? { ...e, amount: amt, currency: editDraft.currency, description: editDraft.description.trim() }
         : e
     );
     setEntries(next);
@@ -149,9 +150,8 @@ function App() {
     persistRates(next, "manuel", now);
   };
 
-  const totalTL = entries.reduce((s, e) => s + e.tlAmount, 0);
-  const totalEUR = entries.reduce((s, e) => s + e.eurAmount, 0);
-  const byCurrency = entries.reduce((acc, e) => { acc[e.currency] = (acc[e.currency] || 0) + e.amount; return acc; }, {});
+  const totalTL = entries.reduce((s, e) => s + entryTL(e, rates), 0);
+  const totalEUR = entries.reduce((s, e) => s + entryEUR(e, rates), 0);
   const formattedDate = (iso) => new Date(iso).toLocaleDateString("tr-TR", { day: "2-digit", month: "short" });
 
   return (
@@ -203,7 +203,6 @@ function App() {
           <div style={styles.ticketHalf}>
             <div style={styles.ticketLabel}>TOPLAM · TL</div>
             <div style={styles.ticketAmountTL}>{fmtTRY(totalTL)}</div>
-            <div style={styles.ticketSub}>{entries.length} kayıt</div>
           </div>
           <div style={styles.perforation}>
             <span style={{ ...styles.notch, top: -9 }} />
@@ -212,9 +211,6 @@ function App() {
           <div style={styles.ticketHalf}>
             <div style={styles.ticketLabel}>TOPLAM · EUR</div>
             <div style={styles.ticketAmountEUR}>{fmtEUR(totalEUR)}</div>
-            <div style={styles.ticketSub}>
-              {Object.keys(byCurrency).map((c) => fmtAmount(byCurrency[c], c)).join(" · ") || "—"}
-            </div>
           </div>
         </div>
 
@@ -279,7 +275,7 @@ function App() {
                       </div>
                       <div style={styles.rowOrig}>{CURRENCIES[entry.currency].flag} {fmtAmount(entry.amount, entry.currency)}</div>
                     </div>
-                    <div style={styles.rowTL}>{fmtTRY(entry.tlAmount)}</div>
+                    <div style={styles.rowTL}>{fmtTRY(entryTL(entry, rates))}</div>
                     <div className="kd-row-actions" style={styles.rowActions}>
                       <button onClick={() => startEdit(entry)} style={styles.iconBtn} title="Düzenle">✎</button>
                       <button onClick={() => deleteEntry(entry.id)} style={styles.iconBtnDanger} title="Sil">🗑</button>
@@ -296,7 +292,7 @@ function App() {
 }
 
 const styles = {
-  page: { minHeight: "100vh", background: "#101B2D", backgroundImage: "radial-gradient(circle at 15% 0%, rgba(201,162,75,0.08), transparent 40%), radial-gradient(circle at 90% 20%, rgba(74,124,124,0.10), transparent 45%)", fontFamily: "'Inter', sans-serif", padding: "32px 16px 60px", display: "flex", justifyContent: "center" },
+  page: { minHeight: "100vh", background: "#101B2D", backgroundImage: "radial-gradient(circle at 15% 0%, rgba(201,162,75,0.08), transparent 40%), radial-gradient(circle at 90% 20%, rgba(74,124,124,0.10), transparent 45%)", fontFamily: "'Inter', sans-serif", padding: "max(32px, env(safe-area-inset-top)) 16px 60px", display: "flex", justifyContent: "center" },
   container: { width: "100%", maxWidth: 560 },
   header: { marginBottom: 22, paddingLeft: 2 },
   eyebrow: { display: "flex", alignItems: "center", gap: 6, color: "#C9A24B", fontFamily: "'IBM Plex Mono', monospace", fontSize: 11.5, letterSpacing: "0.14em", fontWeight: 600, marginBottom: 6 },
@@ -333,13 +329,13 @@ const styles = {
   empty: { textAlign: "center", padding: "48px 20px", border: "1px dashed rgba(247,241,227,0.16)", borderRadius: 14 },
   emptyTitle: { color: "#F7F1E3", fontFamily: "'Fraunces', serif", fontSize: 18, marginBottom: 4 },
   emptyText: { color: "#7C859B", fontSize: 13.5 },
-  row: { display: "flex", alignItems: "center", gap: 14, padding: "13px 6px", borderBottom: "1px solid rgba(247,241,227,0.08)" },
-  rowDate: { color: "#6E7891", fontFamily: "'IBM Plex Mono', monospace", fontSize: 11.5, width: 42, flexShrink: 0 },
+  row: { display: "flex", alignItems: "flex-start", gap: 14, padding: "13px 6px", borderBottom: "1px solid rgba(247,241,227,0.08)" },
+  rowDate: { color: "#6E7891", fontFamily: "'IBM Plex Mono', monospace", fontSize: 11.5, width: 42, flexShrink: 0, paddingTop: 2 },
   rowMain: { flex: 1, minWidth: 0 },
-  rowDesc: { color: "#F0EBDC", fontSize: 14, fontWeight: 500, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" },
+  rowDesc: { color: "#F0EBDC", fontSize: 14, fontWeight: 500, whiteSpace: "normal", wordBreak: "break-word", lineHeight: 1.4 },
   rowOrig: { color: "#8C93A8", fontSize: 12, marginTop: 2, fontFamily: "'IBM Plex Mono', monospace" },
-  rowTL: { color: "#C9A24B", fontFamily: "'IBM Plex Mono', monospace", fontWeight: 600, fontSize: 14, flexShrink: 0, textAlign: "right", minWidth: 92 },
-  rowActions: { display: "flex", gap: 2, flexShrink: 0 },
+  rowTL: { color: "#C9A24B", fontFamily: "'IBM Plex Mono', monospace", fontWeight: 600, fontSize: 14, flexShrink: 0, textAlign: "right", minWidth: 92, paddingTop: 2 },
+  rowActions: { display: "flex", gap: 2, flexShrink: 0, paddingTop: 1 },
   iconBtn: { background: "transparent", border: "none", color: "#C9A24B", cursor: "pointer", padding: 6, borderRadius: 8, display: "flex" },
   iconBtnDanger: { background: "transparent", border: "none", color: "#B5493F", cursor: "pointer", padding: 6, borderRadius: 8, display: "flex" },
   iconBtnSolid: { background: "#C9A24B", border: "none", color: "#101B2D", cursor: "pointer", padding: 8, borderRadius: 8, display: "flex" },
